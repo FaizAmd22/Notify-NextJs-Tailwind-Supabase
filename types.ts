@@ -10,6 +10,23 @@ export interface Song {
     createdAt: number
 }
 
+/**
+ * Penanda posisi untuk pagination Firestore. Harus serializable karena
+ * bolak-balik antara Server Component dan Client Component.
+ *
+ * Menyimpan id dokumen selain createdAt supaya dua lagu dengan timestamp
+ * identik tidak saling menutupi saat dijadikan titik lanjut.
+ */
+export type SongCursor = {
+    createdAt: number
+    id: string
+} | null
+
+export interface SongPage {
+    songs: Song[]
+    nextCursor: SongCursor
+}
+
 export interface UserDetails {
     id: string
     fullName?: string

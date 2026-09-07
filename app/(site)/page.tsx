@@ -6,7 +6,7 @@ import PageContent from "./components/PageContent";
 export const revalidate = 0
 
 export default async function Home() {
-  const songs = await getSongs()
+  const { songs, nextCursor } = await getSongs()
 
   return (
     <div className="bg-neutral-900 rounded-lg h-full overflow-auto overflow-y-auto w-[100vw] md:w-[70vw]">
@@ -32,7 +32,7 @@ export default async function Home() {
             Newest songs
           </h1>
         </div>
-        <PageContent songs={songs}/>
+        <PageContent songs={songs} nextCursor={nextCursor} />
       </div>
     </div>
   )
