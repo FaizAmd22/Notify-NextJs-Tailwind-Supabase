@@ -7,7 +7,8 @@ import { HiHome } from "react-icons/hi";
 import { BiSearch } from "react-icons/bi";
 import Button from "./Button";
 import useAuthModal from "@/hooks/useAuthModal";
-import { useSupabaseClient } from "@supabase/auth-helpers-react"
+import { auth } from "@/libs/firebase";
+import { signOut } from "firebase/auth";
 import { useUser } from "@/hooks/useUser";
 import { toast } from "react-hot-toast"
 import usePlayer from "@/hooks/usePlayer";
@@ -25,21 +26,22 @@ const Header: React.FC<HeaderProps> = ({
 }) => {
     const authModal = useAuthModal()
     const router = useRouter()
-    const supabaseClient = useSupabaseClient()
-    const { user } = useUser()
+    const { user, isLoading } = useUser()
     const player = usePlayer()
     const uploadModal = useUploadModal()
 
     const handleLogout = async () => {
-        const { error } = await supabaseClient.auth.signOut()
-        // TODO: Reset any playing songs
-        player.reset()
-        router.refresh()
+        try {
+            await signOut(auth)
+            // Cookie server dihapus terpisah dari sesi client — signOut() hanya
+            // membersihkan sisi browser, session cookie httpOnly tidak terjangkau dari sini.
+            await fetch('/api/auth/session', { method: 'DELETE' })
 
-        if (error) {
-            toast.error(error.message)
-        } else {
+            player.reset()
+            router.refresh()
             toast.success('Logged out!')
+        } catch (error) {
+            toast.error((error as Error).message)
         }
     }
 
@@ -91,7 +93,12 @@ const Header: React.FC<HeaderProps> = ({
                     </button>
                 </div>
                 <div className="flex justify-between items-center gap-x-4">
-                    {user ? (
+                    {isLoading ? (
+                        // Placeholder seukuran tombolnya, supaya "Log in" tidak
+                        // sempat berkedip lalu berganti "Logout" saat status
+                        // auth baru diketahui.
+                        <div className="h-[40px] w-[92px] rounded-full bg-neutral-800 animate-pulse" />
+                    ) : user ? (
                         <div className="flex gap-x-4 items-center">
                             <Button
                                 onClick={handleLogout}

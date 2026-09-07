@@ -2,7 +2,7 @@ import getSongsByUserId from '@/actions/getSongsByUserId'
 import Player from '@/components/Player'
 import Sidebar from '@/components/Sidebar'
 import ModalProvider from '@/providers/ModalProvider'
-import SupabaseProvider from '@/providers/SupabaseProvider'
+import FirebaseAuthProvider from '@/providers/FirebaseAuthProvider'
 import ToasterProvider from '@/providers/ToasterProvider'
 import UserProvider from '@/providers/UserProvider'
 import type { Metadata } from 'next'
@@ -41,7 +41,7 @@ export default async function RootLayout({
     <html lang="en">
       <body className={font.className}>
         <ToasterProvider />
-        <SupabaseProvider>
+        <FirebaseAuthProvider>
           <UserProvider>
             <ModalProvider />
             <Sidebar songs={userSongs}>
@@ -49,7 +49,7 @@ export default async function RootLayout({
             </Sidebar>
             <Player />
           </UserProvider>
-        </SupabaseProvider>
+        </FirebaseAuthProvider>
       </body>
     </html>
   )

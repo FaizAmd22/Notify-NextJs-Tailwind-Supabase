@@ -2,7 +2,6 @@
 
 import AuthModal from "@/components/AuthModal";
 import UploadModal from "@/components/UploadModal";
-import { ProductWithPrices } from "@/types";
 import { useEffect, useState } from "react";
 
 

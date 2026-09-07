@@ -1,19 +1,12 @@
 import { Song } from "@/types";
-import { useSupabaseClient } from "@supabase/auth-helpers-react";
 
+/**
+ * Cloudinary mengembalikan secure_url lengkap saat upload, dan URL itu yang
+ * disimpan di Firestore — jadi tidak ada lagi perakitan URL dari path seperti
+ * getPublicUrl() milik Supabase Storage.
+ */
 const useLoadImage = (song: Song) => {
-    const supabaseClient = useSupabaseClient()
-
-    if (!song) {
-        return null
-    }
-
-    const { data: imageData } = supabaseClient
-        .storage
-        .from('images')
-        .getPublicUrl(song.image_path)
-
-    return imageData.publicUrl
+    return song?.imageUrl || null
 }
 
 export default useLoadImage

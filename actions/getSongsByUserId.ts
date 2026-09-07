@@ -1,33 +1,28 @@
+import { getAdminDb } from "@/libs/firebaseAdmin";
+import { toSong } from "@/libs/serialize";
+import getCurrentUserId from "@/libs/session";
 import { Song } from "@/types";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from 'next/headers';
 
 const getSongsByUserId = async (): Promise<Song[]> => {
-    const supabase = createServerComponentClient({
-        cookies: cookies 
-    })
+    const userId = await getCurrentUserId()
 
-    const { 
-        data: sessionData,
-        error: sessionError
-    } = await supabase.auth.getSession()
-
-    if (sessionError) {
-        console.log(sessionError.message)
+    if (!userId) {
         return []
     }
 
-    const { data, error } = await supabase
-        .from('songs')
-        .select('*')
-        .eq('user_id', sessionData.session?.user.id)
-        .order('created_at', { ascending: false })
+    try {
+        const snapshot = await getAdminDb()
+            .collection('songs')
+            .where('userId', '==', userId)
+            .get()
 
-    if (error) {
-        console.log(error.message)
+        return snapshot.docs
+            .map((doc) => toSong(doc.id, doc.data()))
+            .sort((a, b) => b.createdAt - a.createdAt)
+    } catch (error) {
+        console.error('[getSongsByUserId]', error)
+        return []
     }
-
-    return (data as any) || []
 }
 
 export default getSongsByUserId

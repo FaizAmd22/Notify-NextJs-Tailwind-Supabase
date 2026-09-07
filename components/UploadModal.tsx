@@ -2,22 +2,124 @@
 
 import useUploadModal from "@/hooks/useUploadModal";
 import { useUser } from "@/hooks/useUser";
-import { useSupabaseClient } from "@supabase/auth-helpers-react";
+import { db } from "@/libs/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm, FieldValues, SubmitHandler } from "react-hook-form";
 import toast from "react-hot-toast";
-import uniqid from "uniqid"
 import Button from "./Button";
 import Input from "./Input";
 import Modal from "./Modal";
 
+const SONG_FOLDER = "notify/songs"
+const IMAGE_FOLDER = "notify/images"
+
+type ResourceType = "image" | "video"
+
+type Signature = {
+    signature: string
+    timestamp: number
+    apiKey: string
+    cloudName: string
+}
+
+type UploadedAsset = {
+    url: string
+    publicId: string
+    resourceType: ResourceType
+}
+
+const getSignature = async (folder: string): Promise<Signature> => {
+    const res = await fetch("/api/cloudinary/sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder }),
+    })
+
+    if (!res.ok) {
+        throw new Error("Failed to authorize upload")
+    }
+
+    return res.json()
+}
+
+/**
+ * XMLHttpRequest dipakai, bukan fetch, semata karena hanya XHR yang memberi
+ * event progres unggahan — fetch belum punya padanannya di browser.
+ *
+ * File tetap dikirim langsung ke Cloudinary, tidak lewat API route Next.js:
+ * body request serverless di Vercel dibatasi 4.5 MB dan mp3 hampir selalu
+ * lebih besar dari itu.
+ */
+const uploadToCloudinary = (
+    file: File,
+    folder: string,
+    resourceType: ResourceType,
+    sign: Signature,
+    onProgress: (loaded: number) => void
+) =>
+    new Promise<UploadedAsset>((resolve, reject) => {
+        const body = new FormData()
+        body.append("file", file)
+        body.append("folder", folder)
+        body.append("timestamp", String(sign.timestamp))
+        body.append("api_key", sign.apiKey)
+        body.append("signature", sign.signature)
+
+        const xhr = new XMLHttpRequest()
+        xhr.open(
+            "POST",
+            `https://api.cloudinary.com/v1_1/${sign.cloudName}/${resourceType}/upload`
+        )
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                onProgress(event.loaded)
+            }
+        }
+
+        xhr.onload = () => {
+            if (xhr.status < 200 || xhr.status >= 300) {
+                return reject(new Error("Failed upload"))
+            }
+
+            try {
+                const data = JSON.parse(xhr.responseText)
+                resolve({
+                    url: data.secure_url,
+                    publicId: data.public_id,
+                    resourceType,
+                })
+            } catch {
+                reject(new Error("Unexpected response from Cloudinary"))
+            }
+        }
+
+        xhr.onerror = () => reject(new Error("Network error while uploading"))
+        xhr.send(body)
+    })
+
+const destroyAsset = async (asset: UploadedAsset) => {
+    try {
+        await fetch("/api/cloudinary/destroy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                publicId: asset.publicId,
+                resourceType: asset.resourceType,
+            }),
+        })
+    } catch (error) {
+        console.log("[UploadModal] rollback", error)
+    }
+}
 
 const UploadModal = () => {
     const [isLoading, setIsLoading] = useState(false)
+    const [progress, setProgress] = useState(0)
     const uploadModal = useUploadModal()
     const { user } = useUser()
-    const supabaseClient = useSupabaseClient()
     const router = useRouter()
 
     const {
@@ -34,90 +136,102 @@ const UploadModal = () => {
     })
 
     const onChange = (open: boolean) => {
+        // Menutup modal di tengah unggahan akan meninggalkan file yatim di
+        // Cloudinary tanpa dokumen Firestore-nya, jadi ditahan selagi berjalan.
+        if (isLoading) {
+            return
+        }
+
         if (!open) {
             reset()
+            setProgress(0)
             uploadModal.onClose()
         }
     }
 
-    const onSubmit: SubmitHandler<FieldValues> = async (values)  => {
+    const onSubmit: SubmitHandler<FieldValues> = async (values) => {
+        const imageFile = values.image?.[0]
+        const songFile = values.song?.[0]
+
+        if (!imageFile || !songFile || !user) {
+            toast.error('Missing fields')
+            return
+        }
+
+        setIsLoading(true)
+        setProgress(0)
+
+        const totalBytes = songFile.size + imageFile.size
+        const loaded = { song: 0, image: 0 }
+        const report = () =>
+            setProgress(Math.round(((loaded.song + loaded.image) / totalBytes) * 100))
+
         try {
-            setIsLoading(true)
+            // Kedua signature diminta sekaligus, lalu kedua file diunggah
+            // bersamaan. Versi sebelumnya menjalankan keempat langkah ini
+            // berurutan sehingga waktunya menumpuk.
+            const [songSign, imageSign] = await Promise.all([
+                getSignature(SONG_FOLDER),
+                getSignature(IMAGE_FOLDER),
+            ])
 
-            const imageFile = values.image?.[0]
-            const songFile = values.song?.[0]
+            const results = await Promise.allSettled([
+                uploadToCloudinary(songFile, SONG_FOLDER, "video", songSign, (n) => {
+                    loaded.song = n
+                    report()
+                }),
+                uploadToCloudinary(imageFile, IMAGE_FOLDER, "image", imageSign, (n) => {
+                    loaded.image = n
+                    report()
+                }),
+            ])
 
-            if (!imageFile || !songFile || !user) {
-                toast.error('Missing fields')
-                return
+            const uploaded = results
+                .filter(
+                    (r): r is PromiseFulfilledResult<UploadedAsset> =>
+                        r.status === "fulfilled"
+                )
+                .map((r) => r.value)
+
+            const failure = results.find((r) => r.status === "rejected")
+
+            if (failure) {
+                // Salah satu gagal — bersihkan yang terlanjur berhasil
+                await Promise.all(uploaded.map(destroyAsset))
+                throw (failure as PromiseRejectedResult).reason
             }
 
-            const uniqueId = uniqid();
+            const [song, image] = uploaded
 
-            // Upload Song
-            const {
-                data: songData,
-                error: songError,
-            } = await supabaseClient
-            .storage
-            .from('songs')
-            .upload(`song-${values.title}-${uniqueId}`, songFile, {
-                cacheControl: '3600',
-                upsert: false
-            })
-
-            if (songError) {
-                setIsLoading(false)
-                return toast.error('Failed song upload')
-            }
-
-            // Upload Image
-            const {
-                data: imageData,
-                error: imageError,
-            } = await supabaseClient
-            .storage
-            .from('images')
-            .upload(`image-${values.title}-${uniqueId}`, imageFile, {
-                cacheControl: '3600',
-                upsert: false
-            })
-
-            if (imageError) {
-                setIsLoading(false)
-                return toast.error('Failed image upload')
-            }
-
-            const {
-                error: supabaseError
-            } = await supabaseClient
-                .from('songs')
-                .insert({
-                    user_id: user.id,
+            try {
+                await addDoc(collection(db, 'songs'), {
+                    userId: user.uid,
                     title: values.title,
                     author: values.author,
-                    image_path: imageData.path,
-                    song_path: songData.path
+                    songUrl: song.url,
+                    songPublicId: song.publicId,
+                    imageUrl: image.url,
+                    imagePublicId: image.publicId,
+                    createdAt: serverTimestamp(),
                 })
-
-            if (supabaseError) {
-                setIsLoading(false)
-                return toast.error(supabaseError.message)
+            } catch (error) {
+                await Promise.all(uploaded.map(destroyAsset))
+                throw error
             }
 
             router.refresh()
-            setIsLoading(false)
             toast.success('Song created!')
             reset()
+            setProgress(0)
             uploadModal.onClose()
         } catch (error) {
-            toast.error("Somthing went wrong")
+            toast.error((error as Error).message || "Something went wrong")
         } finally {
             setIsLoading(false)
         }
     }
 
-    return ( 
+    return (
         <Modal
             title="Add a song"
             description="Upload an mp3 file"
@@ -164,12 +278,27 @@ const UploadModal = () => {
                         accept="image/*"
                     />
                 </div>
+
+                {isLoading && (
+                    <div className="flex flex-col gap-y-1">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-700">
+                            <div
+                                className="h-full bg-green-500 transition-all duration-200"
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-neutral-400 text-center">
+                            {progress < 100 ? `Uploading ${progress}%` : 'Finishing up'}
+                        </p>
+                    </div>
+                )}
+
                 <Button disabled={isLoading} type="submit">
-                    Create
+                    {isLoading ? 'Uploading' : 'Create'}
                 </Button>
             </form>
         </Modal>
      );
 }
- 
+
 export default UploadModal;

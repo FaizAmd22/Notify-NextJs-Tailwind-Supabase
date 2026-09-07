@@ -1,36 +1,56 @@
+import { getAdminDb } from "@/libs/firebaseAdmin";
+import { toMillis, toSong } from "@/libs/serialize";
+import getCurrentUserId from "@/libs/session";
 import { Song } from "@/types";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from 'next/headers';
 
+/**
+ * Pengganti join PostgREST `.select('*, songs(*)')`.
+ * Firestore tidak punya join, jadi dilakukan dua langkah: ambil dokumen like
+ * milik user, lalu ambil dokumen lagunya sekaligus lewat getAll().
+ */
 const getLikedSongs = async (): Promise<Song[]> => {
-    const supabase = createServerComponentClient({
-        cookies: cookies 
-    })
+    const userId = await getCurrentUserId()
 
-    const {
-        data: {
-            session
+    if (!userId) {
+        return []
+    }
+
+    try {
+        const db = getAdminDb()
+
+        // Tanpa .orderBy() supaya tidak menuntut composite index — lihat alasan
+        // yang sama di getSongsByUserId. Urutannya dibereskan di memori.
+        const likes = await db
+            .collection('liked_songs')
+            .where('userId', '==', userId)
+            .get()
+
+        if (likes.empty) {
+            return []
         }
-    } = await supabase.auth.getSession()
 
-    const { data, error } = await supabase
-        .from('liked_songs')
-        .select('*, songs(*)')
-        .eq('user_id', session?.user?.id)
-        .order('created_at', { ascending: false })
+        const ordered = likes.docs
+            .map((like) => ({
+                songId: like.data().songId as string,
+                likedAt: toMillis(like.data().createdAt),
+            }))
+            .sort((a, b) => b.likedAt - a.likedAt)
 
-    if (error) {
-        console.log(error)
+        const songRefs = ordered.map((like) =>
+            db.collection('songs').doc(like.songId)
+        )
+
+        const songDocs = await db.getAll(...songRefs)
+
+        // getAll mempertahankan urutan input, jadi urutan "terakhir di-like"
+        // tetap terjaga. Lagu yang sudah dihapus disaring di sini.
+        return songDocs
+            .filter((doc) => doc.exists)
+            .map((doc) => toSong(doc.id, doc.data()))
+    } catch (error) {
+        console.error('[getLikedSongs]', error)
         return []
     }
-
-    if (!data) {
-        return []
-    }
-
-    return data.map((item) => ({
-        ...item.songs
-    }))
 }
 
 export default getLikedSongs

@@ -1,0 +1,40 @@
+rules_version = '2';
+
+// Pengganti Row Level Security milik Postgres/Supabase.
+//
+// PENTING: seluruh otorisasi aplikasi ini memang tinggal di sini. Tidak ada
+// satu pun pengecekan kepemilikan di actions/ maupun di komponen, jadi rules
+// ini wajib di-deploy — tanpa itu siapa pun bisa menghapus lagu orang lain.
+//
+// Admin SDK (yang dipakai actions/) mem-bypass rules ini; itu perilaku normal
+// dan aman karena kode server sudah memfilter berdasarkan uid dari session cookie.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /songs/{songId} {
+      // Katalog lagu bersifat publik, sama seperti sebelumnya
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null
+                    && request.auth.uid == resource.data.userId;
+    }
+
+    match /liked_songs/{likeId} {
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.userId;
+      // Doc ID wajib berbentuk "<uid>_<songId>" supaya user tidak bisa
+      // menitipkan like atas nama orang lain
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId
+                    && likeId == request.auth.uid + '_' + request.resource.data.songId;
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.userId;
+    }
+  }
+}

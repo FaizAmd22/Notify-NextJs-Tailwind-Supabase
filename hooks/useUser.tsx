@@ -1,17 +1,14 @@
-import { Subscription, UserDetails } from "@/types"
+import { db } from "@/libs/firebase"
+import { FirebaseAuthContext } from "@/providers/FirebaseAuthProvider"
+import { UserDetails } from "@/types"
+import { User } from "firebase/auth"
+import { doc, getDoc } from "firebase/firestore"
 import { createContext, useContext, useEffect, useState } from "react"
-import { 
-    useSessionContext,
-    useUser as useSupaUser,
-    User
-} from "@supabase/auth-helpers-react"
 
 type UserContextType = {
-    accessToken: string | null
     user: User | null
     userDetails: UserDetails | null
     isLoading: boolean
-    subscription: Subscription | null
 }
 
 export const UserContext = createContext<UserContextType | undefined>(
@@ -23,54 +20,50 @@ export interface Props {
 }
 
 export const MyUserContextProvider = (props: Props) => {
-    const {
-        session,
-        isLoading: isLoadingUser,
-        supabaseClient: supabase
-    } = useSessionContext()
-    const user = useSupaUser()
-    const accessToken = session?.access_token ?? null
+    const { user, isLoading: isLoadingUser } = useContext(FirebaseAuthContext)
     const [isLoadingData, setIsLoadingData] = useState(false)
     const [userDetails, setUserDetails] = useState<UserDetails | null>(null)
-    const [subscription, setSubscription] = useState<Subscription | null>(null)
-
-    const getUserDetails = () => supabase.from('users').select('*').single()
-    const getSubscription = () => supabase
-        .from('subscription')
-        .select('*, prices(*, products(*))')
-        .in('status', ['trialing', 'active'])
-        .single()
 
     useEffect(() => {
-        if (user && !isLoadingData && !userDetails && !subscription) {
-            setIsLoadingData(true)
-
-            Promise.allSettled([getUserDetails(), getSubscription()]).then((result) => {
-                const userDetailsPromise = result[0]
-                const subscriptionPromise = result[1]
-
-                if (userDetailsPromise.status === "fulfilled") {
-                    setUserDetails(userDetailsPromise.value.data as UserDetails)
-                }
-
-                if (subscriptionPromise.status === "fulfilled") {
-                    setSubscription(subscriptionPromise.value.data as Subscription)
-                }
-
-                setIsLoadingData(false)
-            })
-        } else if (!user && !isLoadingUser && !isLoadingData) {
+        if (!user) {
             setUserDetails(null)
-            setSubscription(null)
+            return
         }
-    }, [user, isLoadingUser])
+
+        let cancelled = false
+        setIsLoadingData(true)
+
+        getDoc(doc(db, "users", user.uid))
+            .then((snapshot) => {
+                if (cancelled) {
+                    return
+                }
+
+                const data = snapshot.data()
+
+                setUserDetails({
+                    id: user.uid,
+                    fullName: data?.fullName ?? user.displayName ?? undefined,
+                    avatarUrl: data?.avatarUrl ?? user.photoURL ?? undefined,
+                    email: data?.email ?? user.email ?? undefined,
+                })
+            })
+            .catch((error) => console.log("[useUser] getUserDetails", error))
+            .finally(() => {
+                if (!cancelled) {
+                    setIsLoadingData(false)
+                }
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [user])
 
     const value = {
-        accessToken,
         user,
         userDetails,
         isLoading: isLoadingUser || isLoadingData,
-        subscription
     }
 
     return <UserContext.Provider value={value} {...props} />

@@ -1,12 +1,13 @@
+import { db } from "@/libs/firebase"
+import { toSong } from "@/libs/serialize"
 import { Song } from "@/types"
-import { useSessionContext } from "@supabase/auth-helpers-react"
-import { useState, useEffect, useMemo } from "react"
+import { doc, getDoc } from "firebase/firestore"
+import { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
 
 const useGetSongById = (id?: string) => {
     const [isLoading, setIsLoading] = useState(false)
     const [song, setSong] = useState<Song | undefined>()
-    const { supabaseClient } = useSessionContext()
 
     useEffect(() => {
       if (!id) {
@@ -16,24 +17,25 @@ const useGetSongById = (id?: string) => {
       setIsLoading(true)
 
       const fetchSong = async () => {
-        const { data, error } = await supabaseClient
-            .from('songs')
-            .select('*')
-            .eq('id', id)
-            .single()
+        try {
+            const snapshot = await getDoc(doc(db, 'songs', id))
 
-        if (error) {
+            if (!snapshot.exists()) {
+                setIsLoading(false)
+                return toast.error('Song not found')
+            }
+
+            setSong(toSong(snapshot.id, snapshot.data()))
+        } catch (error) {
+            toast.error((error as Error).message)
+        } finally {
             setIsLoading(false)
-            return toast.error(error.message)
         }
-
-        setSong(data as Song)
-        setIsLoading(false)
       }
 
       fetchSong()
-    }, [id, supabaseClient])
-    
+    }, [id])
+
     return useMemo(() => ({
         isLoading,
         song

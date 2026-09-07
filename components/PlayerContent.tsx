@@ -10,6 +10,8 @@ import Slider from "./Slider";
 import usePlayer from "@/hooks/usePlayer";
 import { useEffect, useState } from "react"
 import useSound from "use-sound";
+import { BeatLoader } from "react-spinners";
+import toast from "react-hot-toast";
 
 interface PlayerContentProps {
     song: Song
@@ -23,6 +25,7 @@ const PlayerContent: React.FC<PlayerContentProps> = ({
     const player = usePlayer()
     const [volume, setVolume] = useState(1)
     const [isPlaying, setIsPlaying] = useState(false)
+    const [isReady, setIsReady] = useState(false)
     const Icon = isPlaying ? BsPauseFill : BsPlayFill
     const VolumeIcon = volume === 0 ? HiSpeakerXMark : HiSpeakerWave
 
@@ -60,13 +63,24 @@ const PlayerContent: React.FC<PlayerContentProps> = ({
         songUrl,
         {
             volume: volume,
+            // Kunci performa playback. Default Howler adalah html5:false, yang
+            // memakai Web Audio API: seluruh mp3 diunduh DAN di-decode dulu
+            // sebelum bunyi pertama keluar — untuk file 320kbps itu lama sekali.
+            // html5:true memakai elemen <audio> yang men-stream, jadi lagu mulai
+            // berbunyi begitu buffer awal siap.
+            html5: true,
+            format: ['mp3'],
+            onload: () => setIsReady(true),
             onplay: () => setIsPlaying(true),
             onend: () => {
                 setIsPlaying(false)
                 onPlayNext()
             },
             onpause: () => setIsPlaying(false),
-            format: ['mp3']
+            onloaderror: () => {
+                setIsReady(true)
+                toast.error('Failed to load audio')
+            },
         }
     )
 
@@ -94,6 +108,20 @@ const PlayerContent: React.FC<PlayerContentProps> = ({
         }
     }
 
+    // Tombol play berubah jadi spinner selama audio belum siap, supaya klik yang
+    // belum berbunyi tidak terasa seperti aplikasi menggantung.
+    const PlayControl = ({ size }: { size: number }) => (
+        <div
+            onClick={isReady ? handlePlay : undefined}
+            className={`flex items-center justify-center h-10 w-10 rounded-full bg-white p-1 ${isReady ? "cursor-pointer" : "cursor-wait"}`}
+        >
+            {isReady
+                ? <Icon size={size} className="text-black" />
+                : <BeatLoader color="#000000" size={6} />
+            }
+        </div>
+    )
+
     return ( 
         <div className="grid grid-cols-2 md:grid-cols-3 h-full px-2">
             <div className="flex w-full justify-start">
@@ -104,12 +132,7 @@ const PlayerContent: React.FC<PlayerContentProps> = ({
             </div>
 
             <div className="flex md:hidden col-auto w-full justify-end items-center">
-                <div
-                    onClick={handlePlay}
-                    className="h-10 w-10 flex items-center justify-center rounded-full bg-white p-1 cursor-pointer"
-                >
-                    <Icon size={30} className="text-black"/>
-                </div>
+                <PlayControl size={30} />
             </div>
 
             <div className="hidden h-full md:flex justify-center items-center w-full max-w-[722px] gap-x-6">
@@ -118,12 +141,7 @@ const PlayerContent: React.FC<PlayerContentProps> = ({
                     size={30} 
                     className="text-neutral-400 cursor-pointer hover:text-white transition"
                 />
-                <div
-                    onClick={handlePlay}
-                    className="flex items-center justify-center h-10 w-10 rounded-full bg-white p-1 cursor-pointer"
-                >
-                    <Icon size={30} className="text-black"/>
-                </div>
+                <PlayControl size={30} />
                 <AiFillStepForward
                     onClick={onPlayNext}
                     size={30}

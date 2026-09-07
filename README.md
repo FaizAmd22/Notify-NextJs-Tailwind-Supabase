@@ -1,5 +1,54 @@
 This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
+## Stack
+
+- **Firebase Auth** — login email/password, Google, dan GitHub
+- **Cloud Firestore** — koleksi `songs`, `liked_songs`, `users`
+- **Cloudinary** — penyimpanan file mp3 dan gambar cover
+
+> Firebase Cloud Storage **tidak** dipakai: sejak 3 Februari 2026 layanan itu
+> mewajibkan Blaze plan, sementara project ini berjalan di Spark (gratis).
+> Karena itu file media ditaruh di Cloudinary.
+
+## Setup
+
+1. **Firebase** — buat project, lalu:
+   - Authentication → aktifkan provider **Email/Password**, **Google**, **GitHub**
+   - Firestore Database → buat database (production mode)
+   - Project Settings → Service Accounts → *Generate new private key*
+   - Tambahkan `localhost` dan domain produksi di Authentication → Settings → Authorized domains
+2. **Cloudinary** — daftar akun, ambil `cloud_name`, `api_key`, `api_secret` dari Dashboard.
+3. **Environment** — salin `.env.example` jadi `.env.local` lalu isi semua nilainya.
+4. **Verifikasi kredensial**:
+   ```bash
+   npm run check:setup
+   ```
+5. **Deploy rules & index** (wajib — seluruh otorisasi aplikasi ada di `firestore.rules`;
+   tanpa ini setiap operasi Firestore gagal dengan *"Missing or insufficient permissions"*):
+   ```bash
+   npm run deploy:firebase
+   ```
+   Memakai service account, jadi tidak butuh `firebase login`.
+
+### Catatan composite index
+
+`firestore.indexes.json` berisi dua index yang **opsional** — tidak ada query di
+aplikasi ini yang membutuhkannya.
+
+`getSongsByUserId` dan `getLikedSongs` sengaja hanya memakai `where('userId', ...)`
+lalu mengurutkan hasilnya di memori. Menambahkan `.orderBy()` pada query ber-`where`
+akan menuntut composite index, dan bila index itu belum ada, Firestore melempar
+`FAILED_PRECONDITION` sehingga sidebar dan halaman Liked tampak kosong tanpa pesan
+error apa pun. Karena daftar lagu milik satu user selalu kecil, pengurutan di memori
+lebih murah daripada biaya setup dan risiko kegagalan senyapnya.
+
+Kalau suatu saat koleksi per user tumbuh besar, kembalikan `.orderBy('createdAt', 'desc')`
+pada kedua action itu lalu buat index-nya. `npm run deploy:firebase` akan mencoba
+membuatnya; kalau ditolak 403 (service account Firebase Admin SDK memang tidak punya
+izin `datastore.indexes.create`), skrip menampilkan tautan pembuatan sekali-klik dari
+Firestore. Alternatifnya, beri role **Cloud Datastore Index Admin** ke service account
+`firebase-adminsdk-...` di Google Cloud Console → IAM.
+
 ## Getting Started
 
 First, run the development server:

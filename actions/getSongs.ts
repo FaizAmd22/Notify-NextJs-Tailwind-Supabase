@@ -1,22 +1,19 @@
+import { getAdminDb } from "@/libs/firebaseAdmin";
+import { toSong } from "@/libs/serialize";
 import { Song } from "@/types";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from 'next/headers';
 
 const getSongs = async (): Promise<Song[]> => {
-    const supabase = createServerComponentClient({
-        cookies: cookies 
-    })
+    try {
+        const snapshot = await getAdminDb()
+            .collection('songs')
+            .orderBy('createdAt', 'desc')
+            .get()
 
-    const { data, error } = await supabase
-        .from('songs')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-    if (error) {
+        return snapshot.docs.map((doc) => toSong(doc.id, doc.data()))
+    } catch (error) {
         console.log(error)
+        return []
     }
-
-    return (data as any) || []
 }
 
 export default getSongs

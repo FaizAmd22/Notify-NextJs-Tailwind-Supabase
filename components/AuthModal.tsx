@@ -1,25 +1,23 @@
 "use client"
 
 import useAuthModal from "@/hooks/useAuthModal";
-import { useSupabaseClient, useSessionContext } from "@supabase/auth-helpers-react"
-import { Auth } from "@supabase/auth-ui-react";
-import { ThemeSupa } from "@supabase/auth-ui-shared";
+import { useUser } from "@/hooks/useUser";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import AuthForm from "./AuthForm";
 import Modal from "./Modal";
 
 const AuthModal = () => {
-    const supabaseClient = useSupabaseClient()
     const router = useRouter()
-    const { session } = useSessionContext()
+    const { user } = useUser()
     const { onClose, isOpen } = useAuthModal()
 
     useEffect(() => {
-        if (session) {
+        if (user) {
             router.refresh()
             onClose()
         }
-    }, [session, router, onClose])
+    }, [user, router, onClose])
 
     const onChange = (open: boolean) => {
         if (!open) {
@@ -27,31 +25,16 @@ const AuthModal = () => {
         }
     }
 
-    return ( 
+    return (
         <Modal
             title="Welcome!"
             description="Login to your account"
             isOpen={isOpen}
             onChange={onChange}
         >
-            <Auth 
-                theme="dark"
-                providers={["github", "google"]}
-                supabaseClient={supabaseClient}
-                appearance={{
-                    theme: ThemeSupa,
-                    variables: {
-                        default: {
-                            colors: {
-                                brand: '#404040',
-                                brandAccent: '#22c55e'
-                            }
-                        }
-                    }
-                }}
-            />
+            <AuthForm />
         </Modal>
      );
 }
- 
+
 export default AuthModal;
